@@ -1,54 +1,60 @@
-import re
 import json
 import random
 import logging
+from datetime import date
 from pathlib import Path
 
 import anthropic
 
+from generators.utils import (
+    extract_json, score_hook, enforce_limits, estimate_read_time,
+    emotion_score, curiosity_score,
+    get_forbidden_words, save_word_history, pick_layout,
+)
+
 logger = logging.getLogger(__name__)
 
 STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "used_psalms.json"
+HOOKS_FILE = Path(__file__).resolve().parent.parent / "data" / "hooks.json"
 
 FALLBACK = {
-    "serie": "Psaume du jour",
+    "serie":  "Psaume du jour",
     "moment": "aprem",
+    "layout": "oracle",
     "slides": [
-        {"type": "cover", "title": "Psaume 23", "subtitle": "Le Seigneur est mon berger"},
-        {"type": "content", "num": 1, "icon": "🕊️", "title": "Je ne manquerai de rien", "body": "L'Éternel est mon berger. Il me conduit vers des eaux paisibles et restaure mon âme."},
-        {"type": "content", "num": 2, "icon": "✨", "title": "Même dans la vallée", "body": "Même si je marche dans la vallée de l'ombre, je ne crains aucun mal. Tu es avec moi."},
-        {"type": "content", "num": 3, "icon": "🌿", "title": "Ta bonté me suit", "body": "Certainement le bonheur et la grâce m'accompagneront tous les jours de ma vie."},
-        {"type": "transition", "title": "Ce psaume t'est destiné aujourd'hui", "body": "Laisse ces mots résonner en toi. Tu es protégé·e."},
-        {"type": "cta", "title": "Reçois ton message du jour", "cta1": "💬 Parler à mon guide", "cta2": "✨ auryel.fr"}
-    ]
+        {
+            "type":     "cover",
+            "title":    "Ce verset t'est destiné aujourd'hui",
+            "subtitle": "Psaume du jour",
+        },
+        {
+            "type":  "content",
+            "num":   1,
+            "title": "Je ne manquerai de rien",
+            "body":  "\"L'Éternel est mon berger.\"\nTu es guidé·e et protégé·e.\nLaisse-toi porter.",
+        },
+        {
+            "type":  "content",
+            "num":   2,
+            "title": "Tu es accompagné·e",
+            "body":  "Ce psaume t'accompagne exactement\nlà où tu en es aujourd'hui.",
+        },
+        {
+            "type":  "cta",
+            "title": "Reçois ton message du jour",
+            "cta":   "🔗 Lien en bio",
+        },
+    ],
 }
-
-
-def _extract_json(text: str) -> dict:
-    """Extract JSON from a Claude response that may have markdown fences."""
-    match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-    if match:
-        return json.loads(match.group(1))
-    return json.loads(text.strip())
-
-
-def _validate(content: dict, module_name: str) -> dict:
-    slides = content.get("slides", [])
-    if len(slides) != 6:
-        logger.warning(f"[{module_name}] Invalid slide count ({len(slides)}), using fallback")
-        return FALLBACK
-    return content
 
 
 def _load_used() -> list:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if isinstance(data, list):
-                return data
+            return data if isinstance(data, list) else []
     except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return []
+        return []
 
 
 def _save_used(used: list) -> None:
@@ -57,56 +63,105 @@ def _save_used(used: list) -> None:
         json.dump(used, f)
 
 
+def _load_used_hooks() -> list:
+    try:
+        with open(HOOKS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_hook(hook: str) -> None:
+    used = _load_used_hooks()
+    if hook not in used:
+        used.append(hook)
+        with open(HOOKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(used, f, ensure_ascii=False, indent=2)
+
+
 def generate(api_key: str) -> dict:
-    """Returns a content.json-compatible dict with exactly 6 slides."""
-    used = _load_used()
+    """Returns a content.json-compatible dict with exactly 4 slides."""
+    today         = date.today().isoformat()
+    layout        = pick_layout(f"aprem-{today}")
+    forbidden     = get_forbidden_words()
+    forbidden_str = ", ".join(forbidden) if forbidden else "aucun"
+
+    used      = _load_used()
     available = [n for n in range(1, 151) if n not in used]
     if not available:
-        used = []
+        used      = []
         available = list(range(1, 151))
-
     psalm_number = random.choice(available)
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        prompt = f"""Génère un carousel spirituel pour le Psaume {psalm_number} de la Bible en JSON.
+        prompt = f"""Génère un carousel TikTok pour le Psaume {psalm_number} en JSON.
 
-Le carousel doit avoir exactement 6 slides dans cet ordre :
-1. cover : title = "Psaume {psalm_number}", subtitle = le thème principal ou verset clé du psaume
-2. content num=1 : icon (un emoji), title (5-8 mots), body (2-3 phrases sur le premier verset ou thème clé)
-3. content num=2 : icon (un emoji), title (5-8 mots), body (2-3 phrases sur le deuxième verset ou thème clé)
-4. content num=3 : icon (un emoji), title (5-8 mots), body (2-3 phrases sur le troisième verset ou thème clé)
-5. transition : title = message central ou affirmation, body = pensée de clôture apaisante
-6. cta : title = invite à recevoir son message du jour, cta1 = "💬 Parler à mon guide", cta2 = "✨ auryel.fr"
+STRUCTURE : exactement 4 slides.
 
-Ton : protecteur, apaisant, sacré, respectueux. Tout le texte doit être en français.
+- cover : title = accroche percutante max 8 mots (PAS "Psaume {psalm_number}" dans le titre), subtitle = "Psaume {psalm_number}"
+- content num 1 : un verset clé + interprétation — title max 8 mots + body (verset entre guillemets + 1 phrase)
+- content num 2 : application personnelle / révélation — title max 8 mots + body max 25 mots
+- cta : title max 10 mots (question directe)
 
-Retourne uniquement du JSON valide avec cette structure :
+MOTS INTERDITS : {forbidden_str}
+Ton : protecteur, sacré, intime, tutoiement. Tout en français.
+
+JSON uniquement :
 {{
   "serie": "Psaume du jour",
   "moment": "aprem",
-  "slides": [...]
+  "slides": [
+    {{"type": "cover",   "title": "...", "subtitle": "Psaume {psalm_number}"}},
+    {{"type": "content", "num": 1, "title": "...", "body": "..."}},
+    {{"type": "content", "num": 2, "title": "...", "body": "..."}},
+    {{"type": "cta",     "title": "...", "cta": "🔗 Lien en bio"}}
+  ]
 }}"""
 
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
+            max_tokens=700,
+            messages=[{"role": "user", "content": prompt}],
         )
 
-        raw = message.content[0].text
-        content = _extract_json(raw)
-        result = _validate(content, "psalm")
+        raw     = message.content[0].text
+        content = extract_json(raw)
 
-        if result is not FALLBACK:
-            used.append(psalm_number)
-            _save_used(used)
-            logger.info("[psalm] Generated via API")
-        else:
-            logger.warning("[psalm] Using fallback (validation failed)")
-        return result
+        slides = content.get("slides", [])
+        if len(slides) != 4:
+            logger.warning(f"[psalm] Expected 4 slides, got {len(slides)}, using fallback")
+            return _apply_fallback(layout)
+
+        if slides[3].get("type") == "cta":
+            slides[3]["cta"] = "🔗 Lien en bio"
+
+        content = enforce_limits(content)
+        content["layout"]           = layout
+        content["hook_score"]       = score_hook(slides[0].get("title", ""))
+        content["read_time_seconds"]= estimate_read_time(slides)
+        content["emotion_score"]    = emotion_score(slides)
+        content["curiosity_score"]  = curiosity_score(slides)
+
+        used.append(psalm_number)
+        _save_used(used)
+        _save_hook(slides[0].get("title", ""))
+        save_word_history("aprem", slides)
+        logger.info("[psalm] Generated via API")
+        return content
 
     except Exception as e:
         logger.warning(f"[psalm] Using fallback (error: {e})")
-        return FALLBACK
+        return _apply_fallback(layout)
+
+
+def _apply_fallback(layout: str) -> dict:
+    FALLBACK["layout"]           = layout
+    FALLBACK["hook_score"]       = score_hook(FALLBACK["slides"][0]["title"])
+    FALLBACK["read_time_seconds"]= estimate_read_time(FALLBACK["slides"])
+    FALLBACK["emotion_score"]    = emotion_score(FALLBACK["slides"])
+    FALLBACK["curiosity_score"]  = curiosity_score(FALLBACK["slides"])
+    save_word_history("aprem", FALLBACK["slides"])
+    return FALLBACK

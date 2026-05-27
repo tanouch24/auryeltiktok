@@ -49,18 +49,35 @@ def get_output_dir() -> Path:
 def run_series(moment: str, generator_fn, api_key: str, base_dir: Path) -> tuple[dict, int]:
     """
     Generate content, render slides, save content.json.
-    Returns (content_dict, png_count).
+    Returns (content_dict, slide_count).
     Raises on any failure so caller can handle cleanly.
     """
     series_dir = base_dir / moment
     series_dir.mkdir(parents=True, exist_ok=True)
 
     content = generator_fn(api_key)
-    print("  ✓ Contenu généré")
+
+    slide_count = len(content.get("slides", []))
+    if slide_count != 4:
+        raise ValueError(f"Expected exactly 4 slides, got {slide_count}")
+
+    hook       = content.get("slides", [{}])[0].get("title", "—")
+    layout     = content.get("layout", "—")
+    hook_sc    = content.get("hook_score", "—")
+    emotion    = content.get("emotion_score", "—")
+    curiosity  = content.get("curiosity_score", "—")
+    conversion = content.get("conversion_score", "—")
+    read_time  = content.get("read_time_seconds", "—")
+
+    print(f"  ✓ Contenu généré")
+    print(f"     Hook     : \"{hook}\"")
+    print(f"     Layout   : {layout}")
+    print(f"     Scores   : hook={hook_sc}  émotion={emotion}  curiosité={curiosity}  conv={conversion}")
+    print(f"     Lecture  : {read_time}s")
 
     output_files = render_carousel(content, str(series_dir))
-    png_count = len(output_files)
-    print(f"  ✓ {png_count} slides rendues")
+    png_count = len([f for f in output_files if "preview_sheet" not in f])
+    print(f"  ✓ {png_count} slides rendues + preview_sheet.png")
 
     json_path = series_dir / "content.json"
     with open(json_path, "w", encoding="utf-8") as f:

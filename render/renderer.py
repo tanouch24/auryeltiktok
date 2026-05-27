@@ -1,9 +1,8 @@
 """
-renderer.py — Pillow-based image generation engine for Auryel TikTok carousels.
-Renders 6 PNG slides (1080×1920) per content.json dict.
+renderer.py — Pillow-based image generation for Auryel TikTok carousels.
+Layouts: oracle (ornate), minimal (clean), mystique (atmospheric).
 """
 
-import os
 import random
 import math
 import logging
@@ -15,44 +14,48 @@ from PIL import Image, ImageDraw, ImageFont
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
-
-WIDTH = 1080
+WIDTH  = 1080
 HEIGHT = 1920
 
-VOID          = (10, 10, 20)        # #0A0A14
-VIOLET        = (45, 18, 96)        # #2D1260
-ACCENT_VIOLET = (107, 33, 168)      # #6B21A8
-GOLD          = (212, 175, 55)      # #D4AF37
-GOLD_BRIGHT   = (240, 208, 96)      # #F0D060
+VOID          = (10, 10, 20)
+VIOLET        = (45, 18, 96)
+ACCENT_VIOLET = (107, 33, 168)
+GOLD          = (212, 175, 55)
+GOLD_BRIGHT   = (240, 208, 96)
 WHITE         = (255, 255, 255)
-CREAM         = (253, 246, 227)     # #FDF6E3
+CREAM         = (253, 246, 227)
+
+# Radial gradient parameters per layout
+_LAYOUT_GRADIENT = {
+    "oracle":  {"center": (45, 18, 96),  "outer": (10, 10, 20)},
+    "minimal": {"center": (18, 8,  38),  "outer": (8,  6,  14)},
+    "mystique":{"center": (70, 22, 118), "outer": (6,  3,  16)},
+}
+
+# Star density per layout
+_LAYOUT_STARS = {
+    "oracle":  (50, 62),
+    "minimal": (10, 18),
+    "mystique":(28, 38),
+}
 
 # ---------------------------------------------------------------------------
-# Assets directory
+# Assets
 # ---------------------------------------------------------------------------
 
 ASSETS_DIR = Path(__file__).resolve().parent.parent / "assets"
 FONTS_DIR  = ASSETS_DIR / "fonts"
 FONTS_DIR.mkdir(parents=True, exist_ok=True)
 
-# ---------------------------------------------------------------------------
-# Font downloading & caching
-# ---------------------------------------------------------------------------
-
 FONT_URLS = {
-    # Cinzel is a variable-weight font — one file covers Regular and Bold
-    "Cinzel-Regular.ttf":  "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
-    "Cinzel-Bold.ttf":     "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
-    # Lora variable fonts (upright and italic axes)
-    "Lora-Regular.ttf":    "https://raw.githubusercontent.com/google/fonts/main/ofl/lora/Lora%5Bwght%5D.ttf",
-    "Lora-Italic.ttf":     "https://raw.githubusercontent.com/google/fonts/main/ofl/lora/Lora-Italic%5Bwght%5D.ttf",
+    "Cinzel-Regular.ttf": "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
+    "Cinzel-Bold.ttf":    "https://raw.githubusercontent.com/google/fonts/main/ofl/cinzel/Cinzel%5Bwght%5D.ttf",
+    "Lora-Regular.ttf":   "https://raw.githubusercontent.com/google/fonts/main/ofl/lora/Lora%5Bwght%5D.ttf",
+    "Lora-Italic.ttf":    "https://raw.githubusercontent.com/google/fonts/main/ofl/lora/Lora-Italic%5Bwght%5D.ttf",
 }
 
+
 def _download_font(name: str) -> Optional[Path]:
-    """Download a font file to assets/fonts/ if not already present."""
     dest = FONTS_DIR / name
     if dest.exists():
         return dest
@@ -60,7 +63,6 @@ def _download_font(name: str) -> Optional[Path]:
     if not url:
         return None
     try:
-        logger.info(f"[fonts] Downloading {name} from {url}")
         r = requests.get(url, timeout=15)
         r.raise_for_status()
         dest.write_bytes(r.content)
@@ -72,10 +74,6 @@ def _download_font(name: str) -> Optional[Path]:
 
 
 def _load_font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
-    """
-    Load a font by family ('Cinzel'|'Lora') and style ('Regular'|'Bold'|'Italic').
-    Falls back to PIL default if unavailable.
-    """
     name_map = {
         ("Cinzel", "Regular"): "Cinzel-Regular.ttf",
         ("Cinzel", "Bold"):    "Cinzel-Bold.ttf",
@@ -83,10 +81,9 @@ def _load_font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
         ("Lora",   "Bold"):    "Lora-Regular.ttf",
         ("Lora",   "Italic"):  "Lora-Italic.ttf",
     }
-    key = (family, style)
     if style == "Bold" and family == "Lora":
         logger.warning("[fonts] Lora Bold unavailable, using Regular")
-    filename = name_map.get(key, name_map.get((family, "Regular")))
+    filename = name_map.get((family, style), name_map.get((family, "Regular")))
     if filename:
         path = _download_font(filename)
         if path and path.exists():
@@ -94,7 +91,6 @@ def _load_font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
                 return ImageFont.truetype(str(path), size)
             except Exception as exc:
                 logger.warning(f"[fonts] truetype load failed for {path}: {exc}")
-    # fallback
     try:
         return ImageFont.load_default(size=size)
     except TypeError:
@@ -105,85 +101,115 @@ def _load_font(family: str, style: str, size: int) -> ImageFont.FreeTypeFont:
 # Drawing helpers
 # ---------------------------------------------------------------------------
 
-def _draw_radial_gradient(img: Image.Image) -> None:
-    """
-    Simulate a radial gradient: center=VIOLET (#2D1260) → outer=VOID (#0A0A14).
-    Uses 120 concentric ellipses drawn from outermost (dark) to innermost (violet).
-    """
-    draw = ImageDraw.Draw(img)
-    steps = 120
+def _draw_radial_gradient(img: Image.Image, layout: str = "oracle") -> None:
+    colors = _LAYOUT_GRADIENT.get(layout, _LAYOUT_GRADIENT["oracle"])
+    center = colors["center"]
+    outer  = colors["outer"]
+    draw   = ImageDraw.Draw(img)
+    steps  = 120
     cx, cy = WIDTH // 2, HEIGHT // 2
-    max_rx = int(math.sqrt(cx**2 + cy**2)) + 20  # covers corners
+    max_rx = int(math.sqrt(cx**2 + cy**2)) + 20
 
     for i in range(steps):
-        t = i / (steps - 1)           # 0 = outer (VOID), 1 = inner (VIOLET)
-        r = int(VOID[0] + (VIOLET[0] - VOID[0]) * t)
-        g = int(VOID[1] + (VIOLET[1] - VOID[1]) * t)
-        b = int(VOID[2] + (VIOLET[2] - VOID[2]) * t)
-
-        # ellipse radius decreases as i grows (outer first)
+        t  = i / (steps - 1)
+        r  = int(outer[0] + (center[0] - outer[0]) * t)
+        g  = int(outer[1] + (center[1] - outer[1]) * t)
+        b  = int(outer[2] + (center[2] - outer[2]) * t)
         rx = int(max_rx * (1 - t * 0.65))
         ry = int(max_rx * (1 - t * 0.55))
-
-        x0, y0 = cx - rx, cy - ry
-        x1, y1 = cx + rx, cy + ry
-        draw.ellipse([x0, y0, x1, y1], fill=(r, g, b))
+        draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=(r, g, b))
 
 
-def _draw_stars(img: Image.Image, seed: int = 42, count: int = 40) -> None:
-    """Scatter semi-transparent golden stars (small dots/diamonds) across the image."""
+def _draw_stars(img: Image.Image, seed: int = 42, count: int = 40, layout: str = "oracle") -> None:
     draw = ImageDraw.Draw(img)
-    rng = random.Random(seed)
+    rng  = random.Random(seed)
 
     for _ in range(count):
         x = rng.randint(20, WIDTH - 20)
         y = rng.randint(20, HEIGHT - 20)
-        size = rng.randint(2, 4)
-        shape = rng.choice(["dot", "diamond"])
 
-        # Simulate alpha by blending gold toward the background color at that point
-        alpha = rng.randint(140, 220)
+        if layout == "minimal":
+            size  = rng.randint(1, 2)
+            shape = "dot"
+            alpha = rng.randint(60, 120)
+        elif layout == "mystique":
+            size  = rng.randint(2, 4)
+            shape = rng.choice(["dot", "diamond", "diamond"])
+            alpha = rng.randint(100, 180)
+        else:  # oracle
+            size  = rng.randint(2, 5)
+            shape = rng.choice(["dot", "diamond"])
+            alpha = rng.randint(150, 220)
+
         color = (GOLD[0], GOLD[1], GOLD[2], alpha)
-
         if shape == "dot":
             draw.ellipse([x - size, y - size, x + size, y + size], fill=color)
         else:
-            # diamond
             draw.polygon(
                 [(x, y - size * 2), (x + size, y), (x, y + size * 2), (x - size, y)],
                 fill=color,
             )
 
 
-def _make_base(seed: int = 42, star_count: Optional[int] = None) -> Image.Image:
-    """Create a base image with radial gradient + stars."""
+def _draw_border_frame(img: Image.Image, inset: int = 22, thickness: int = 2) -> None:
+    """Oracle: thin semi-transparent gold rectangular border."""
+    draw = ImageDraw.Draw(img)
+    x0, y0 = inset, inset
+    x1, y1 = WIDTH - inset, HEIGHT - inset
+    c = (GOLD[0], GOLD[1], GOLD[2], 160)
+    draw.rectangle([x0, y0, x1, y0 + thickness], fill=c)
+    draw.rectangle([x0, y1 - thickness, x1, y1], fill=c)
+    draw.rectangle([x0, y0, x0 + thickness, y1], fill=c)
+    draw.rectangle([x1 - thickness, y0, x1, y1], fill=c)
+
+
+def _draw_center_glow(img: Image.Image) -> None:
+    """Mystique: layered violet glow at image center."""
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw    = ImageDraw.Draw(overlay)
+    cx, cy  = WIDTH // 2, HEIGHT // 2
+    for i in range(6, 0, -1):
+        alpha = 18 * i // 6
+        rx    = 320 * i // 6
+        ry    = 260 * i // 6
+        c     = (ACCENT_VIOLET[0], ACCENT_VIOLET[1], ACCENT_VIOLET[2], alpha)
+        draw.ellipse([cx - rx, cy - ry, cx + rx, cy + ry], fill=c)
+    img.alpha_composite(overlay)
+
+
+def _make_base(seed: int = 42, star_count: Optional[int] = None, layout: str = "oracle") -> Image.Image:
     img = Image.new("RGBA", (WIDTH, HEIGHT), VOID)
-    _draw_radial_gradient(img)
-    count = star_count if star_count is not None else random.Random(seed).randint(30, 50)
-    _draw_stars(img, seed=seed, count=count)
+    _draw_radial_gradient(img, layout=layout)
+    if star_count is None:
+        lo, hi = _LAYOUT_STARS.get(layout, (30, 50))
+        count = random.Random(seed).randint(lo, hi)
+    else:
+        count = star_count
+    _draw_stars(img, seed=seed, count=count, layout=layout)
+    if layout == "oracle":
+        _draw_border_frame(img)
+    elif layout == "mystique":
+        _draw_center_glow(img)
     return img
 
 
 def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int, draw: ImageDraw.ImageDraw) -> list[str]:
-    """Word-wrap text to fit within max_width pixels. Returns list of lines."""
-    words = text.split()
-    lines = []
-    current_line = []
+    words   = text.split()
+    lines   = []
+    current = []
     for word in words:
-        test_line = " ".join(current_line + [word])
-        bbox = draw.textbbox((0, 0), test_line, font=font)
-        w = bbox[2] - bbox[0]
-        if w <= max_width:
-            current_line.append(word)
+        test = " ".join(current + [word])
+        bbox = draw.textbbox((0, 0), test, font=font)
+        if bbox[2] - bbox[0] <= max_width:
+            current.append(word)
         else:
-            if current_line:
-                lines.append(" ".join(current_line))
-                current_line = [word]
+            if current:
+                lines.append(" ".join(current))
+                current = [word]
             else:
-                # single word too long — accept it
                 lines.append(word)
-    if current_line:
-        lines.append(" ".join(current_line))
+    if current:
+        lines.append(" ".join(current))
     return lines
 
 
@@ -196,199 +222,236 @@ def _draw_centered_text(
     max_width: int = WIDTH - 80,
     line_spacing: int = 20,
 ) -> int:
-    """
-    Draw word-wrapped centered text starting at y. Returns the y position after last line.
-    """
+    """Draw word-wrapped centered text. Returns y after last line."""
     lines = _wrap_text(text, font, max_width, draw)
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
-        w = bbox[2] - bbox[0]
-        x = (WIDTH - w) // 2
+        x = (WIDTH - (bbox[2] - bbox[0])) // 2
         draw.text((x, y), line, font=font, fill=color)
         y += (bbox[3] - bbox[1]) + line_spacing
     return y
 
 
 def _draw_gold_line(draw: ImageDraw.ImageDraw, y: int, length: int = 200, thickness: int = 4) -> None:
-    """Draw a centered horizontal gold line."""
     x0 = (WIDTH - length) // 2
     x1 = (WIDTH + length) // 2
     draw.rectangle([x0, y, x1, y + thickness], fill=GOLD)
 
 
-def _draw_rounded_rect_filled(
-    draw: ImageDraw.ImageDraw,
-    cx: int, cy: int, w: int, h: int,
-    fill_color: tuple, radius: int = 50
-) -> None:
-    """Draw a filled rounded rectangle centered at (cx, cy)."""
-    x0, y0 = cx - w // 2, cy - h // 2
-    x1, y1 = cx + w // 2, cy + h // 2
-    draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, fill=fill_color)
-
-
-def _draw_rounded_rect_outline(
-    draw: ImageDraw.ImageDraw,
-    cx: int, cy: int, w: int, h: int,
-    outline_color: tuple, width: int = 3, radius: int = 45
-) -> None:
-    """Draw an outlined rounded rectangle centered at (cx, cy)."""
-    x0, y0 = cx - w // 2, cy - h // 2
-    x1, y1 = cx + w // 2, cy + h // 2
-    draw.rounded_rectangle([x0, y0, x1, y1], radius=radius, outline=outline_color, width=width)
+def _draw_diamond(draw: ImageDraw.ImageDraw, cx: int, cy: int, size: int, alpha: int = 255) -> None:
+    color = (GOLD[0], GOLD[1], GOLD[2], alpha)
+    draw.polygon([(cx, cy - size), (cx + size, cy), (cx, cy + size), (cx - size, cy)], fill=color)
 
 
 # ---------------------------------------------------------------------------
 # Slide renderers
 # ---------------------------------------------------------------------------
 
-def _render_cover(content: dict, filepath: str) -> None:
-    img = _make_base(seed=1)
+def _render_cover(content: dict, filepath: str, layout: str = "oracle") -> None:
+    img  = _make_base(seed=1, layout=layout)
     draw = ImageDraw.Draw(img)
 
-    # Logo "✦ AURYEL ✦"
-    font_logo = _load_font("Cinzel", "Bold", 48)
-    logo_text = "✦ AURYEL ✦"
-    bbox = draw.textbbox((0, 0), logo_text, font=font_logo)
-    x = (WIDTH - (bbox[2] - bbox[0])) // 2
-    draw.text((x, 100), logo_text, font=font_logo, fill=GOLD)
+    logo_size  = 36 if layout == "minimal" else 48
+    logo_color = (CREAM[0], CREAM[1], CREAM[2], 200) if layout == "mystique" else GOLD
+    font_logo  = _load_font("Cinzel", "Bold", logo_size)
+    bbox = draw.textbbox((0, 0), "[ AURYEL ]", font=font_logo)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, 100), "[ AURYEL ]", font=font_logo, fill=logo_color)
 
-    # Main title — vertically centered at ~40% height (~768)
-    font_title = _load_font("Cinzel", "Bold", 64)
-    title = content.get("title", "")
+    title_color = CREAM if layout == "mystique" else WHITE
+    font_title  = _load_font("Cinzel", "Bold", 80)
+    title       = content.get("title", content.get("titre", ""))
     title_lines = _wrap_text(title, font_title, WIDTH - 120, draw)
-    # measure total block height
-    line_h = draw.textbbox((0, 0), "Ag", font=font_title)[3]
-    block_h = len(title_lines) * (line_h + 16)
-    title_y = int(HEIGHT * 0.4) - block_h // 2
+    line_h      = draw.textbbox((0, 0), "Ag", font=font_title)[3]
+    block_h     = len(title_lines) * (line_h + 16)
+    ty          = int(HEIGHT * 0.4) - block_h // 2
     for line in title_lines:
         bbox = draw.textbbox((0, 0), line, font=font_title)
-        x = (WIDTH - (bbox[2] - bbox[0])) // 2
-        draw.text((x, title_y), line, font=font_title, fill=WHITE)
-        title_y += (bbox[3] - bbox[1]) + 16
+        draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, ty), line, font=font_title, fill=title_color)
+        ty += (bbox[3] - bbox[1]) + 16
 
-    # Subtitle
-    font_sub = _load_font("Lora", "Italic", 36)
-    subtitle = content.get("subtitle", "")
-    sub_y = title_y + 40
-    _draw_centered_text(draw, subtitle, font_sub, CREAM, sub_y, max_width=WIDTH - 140, line_spacing=14)
-
-    # Decorative gold line
-    _draw_gold_line(draw, 1750)
-
-    # "Glissez →"
-    font_hint = _load_font("Lora", "Regular", 28)
-    hint = "Glissez →"
-    bbox = draw.textbbox((0, 0), hint, font=font_hint)
-    x = (WIDTH - (bbox[2] - bbox[0])) // 2
-    draw.text((x, 1800), hint, font=font_hint, fill=GOLD)
+    if layout == "oracle":
+        _draw_gold_line(draw, 1750)
+        font_hint = _load_font("Lora", "Regular", 28)
+        bbox = draw.textbbox((0, 0), "Glissez →", font=font_hint)
+        draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, 1800), "Glissez →", font=font_hint, fill=GOLD)
+    elif layout == "mystique":
+        _draw_diamond(draw, WIDTH // 2, 1820, 14, alpha=140)
+    # minimal: clean, no bottom decoration
 
     img.convert("RGB").save(filepath, format="PNG")
-    logger.info(f"[render] 01_cover.png ✓")
+    logger.info("[render] 01_cover.png ✓")
 
 
-def _render_content(content: dict, slide_num: int, filepath: str, filename: str) -> None:
-    img = _make_base(seed=slide_num + 10)
+def _render_message(content: dict, filepath: str, layout: str = "oracle") -> None:
+    img  = _make_base(seed=20, layout=layout)
     draw = ImageDraw.Draw(img)
 
-    total = 6  # total slides in carousel
+    title_color = CREAM if layout == "mystique" else WHITE
+    body_style  = "Italic" if layout == "mystique" else "Regular"
+    body_size   = 48 if layout == "minimal" else 52
 
-    # Slide number indicator
-    font_num = _load_font("Lora", "Regular", 28)
-    indicator = f"0{slide_num + 1} / 0{total}"
-    bbox = draw.textbbox((0, 0), indicator, font=font_num)
-    x = (WIDTH - (bbox[2] - bbox[0])) // 2
-    # semi-transparent via blending: draw on RGBA overlay
-    indicator_color = (GOLD[0], GOLD[1], GOLD[2], 128)
-    draw.text((x, 60), indicator, font=font_num, fill=indicator_color)
+    font_title   = _load_font("Cinzel", "Bold", 66)
+    title        = content.get("title", "")
+    title_bottom = _draw_centered_text(
+        draw, title, font_title, title_color, 560, max_width=WIDTH - 120, line_spacing=14
+    )
 
-    # Icon/emoji
-    font_icon = _load_font("Lora", "Regular", 96)
-    icon = content.get("icon", "✨")
-    bbox = draw.textbbox((0, 0), icon, font=font_icon)
-    x = (WIDTH - (bbox[2] - bbox[0])) // 2
-    draw.text((x, 240), icon, font=font_icon, fill=WHITE)
+    font_body = _load_font("Lora", body_style, body_size)
+    body      = content.get("body", "")
+    body_y    = max(title_bottom + 70, 720)
+    _draw_centered_text(draw, body, font_body, CREAM, body_y, max_width=860, line_spacing=26)
 
-    # Title
-    font_title = _load_font("Cinzel", "Bold", 52)
-    title = content.get("title", "")
-    title_bottom = _draw_centered_text(draw, title, font_title, WHITE, 400, max_width=WIDTH - 100, line_spacing=14)
-
-    # Body — starts below actual title bottom to avoid overlap
-    font_body = _load_font("Lora", "Regular", 38)
-    body = content.get("body", "")
-    body_y = max(title_bottom + 30, 570)
-    _draw_centered_text(draw, body, font_body, CREAM, body_y, max_width=900, line_spacing=18)
-
-    # Decorative gold line
-    _draw_gold_line(draw, 1750)
+    if layout == "oracle":
+        _draw_gold_line(draw, 1750, length=200, thickness=4)
+    elif layout == "minimal":
+        _draw_gold_line(draw, 1750, length=120, thickness=2)
+    else:  # mystique
+        _draw_diamond(draw, WIDTH // 2, 1790, 12, alpha=150)
 
     img.convert("RGB").save(filepath, format="PNG")
-    logger.info(f"[render] {filename} ✓")
+    logger.info("[render] 02_message.png ✓")
+
+
+def _render_revelation(content: dict, filepath: str, layout: str = "oracle") -> None:
+    sc   = None if layout != "minimal" else 14
+    img  = _make_base(seed=30, star_count=sc, layout=layout)
+    draw = ImageDraw.Draw(img)
+    cx   = WIDTH // 2
+    text = content.get("text", content.get("title", ""))
+
+    if layout == "oracle":
+        _draw_diamond(draw, cx, 780, 22)
+        font    = _load_font("Lora", "Italic", 62)
+        y_start = 840
+    elif layout == "minimal":
+        font    = _load_font("Lora", "Italic", 64)
+        y_start = None
+    else:  # mystique — triple diamond cluster
+        for dx in (-52, 0, 52):
+            _draw_diamond(draw, cx + dx, 750, 16)
+        font    = _load_font("Lora", "Italic", 64)
+        y_start = 820
+
+    lines   = _wrap_text(text, font, WIDTH - 160, draw)
+    line_h  = draw.textbbox((0, 0), "Ag", font=font)[3]
+    block_h = len(lines) * (line_h + 22)
+    y       = max(y_start or 820, (HEIGHT - block_h) // 2)
+
+    text_color = WHITE if layout == "minimal" else CREAM
+    for line in lines:
+        bbox = draw.textbbox((0, 0), line, font=font)
+        draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, y), line, font=font, fill=text_color)
+        y += (bbox[3] - bbox[1]) + 22
+
+    img.convert("RGB").save(filepath, format="PNG")
+    logger.info("[render] 03_revelation.png ✓")
+
+
+def _render_cta(content: dict, filepath: str, layout: str = "oracle") -> None:
+    img  = _make_base(seed=6, layout=layout)
+    draw = ImageDraw.Draw(img)
+
+    if layout == "mystique":
+        _draw_diamond(draw, WIDTH // 2, 640, 26)
+        title_y = 720
+    else:
+        title_y = 700
+
+    font_title   = _load_font("Cinzel", "Bold", 64)
+    title        = content.get("title", "")
+    title_bottom = _draw_centered_text(
+        draw, title, font_title, WHITE, title_y, max_width=WIDTH - 120, line_spacing=18
+    )
+
+    line_len   = 200 if layout == "oracle" else (120 if layout == "minimal" else 160)
+    line_thick = 2 if layout == "minimal" else 4
+    _draw_gold_line(draw, title_bottom + 40, length=line_len, thickness=line_thick)
+
+    # Single CTA line — strip emoji for font rendering
+    cta_raw  = content.get("cta", "Lien en bio")
+    cta_text = cta_raw.replace("🔗", "").strip()
+    if cta_text:
+        cta_size = 52 if layout == "oracle" else 46
+        font_cta = _load_font("Lora", "Italic", cta_size)
+        _draw_centered_text(
+            draw, cta_text, font_cta, GOLD, title_bottom + 100, max_width=WIDTH - 120, line_spacing=14
+        )
+
+    font_wm  = _load_font("Lora", "Regular", 24)
+    wm_color = (GOLD[0], GOLD[1], GOLD[2], 154)
+    bbox = draw.textbbox((0, 0), "Auryel", font=font_wm)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, 1820), "Auryel", font=font_wm, fill=wm_color)
+
+    img.convert("RGB").save(filepath, format="PNG")
+    logger.info("[render] 04_cta.png ✓")
+
+
+# ---------------------------------------------------------------------------
+# Legacy helpers (unused by render_carousel, kept for compatibility)
+# ---------------------------------------------------------------------------
+
+def _render_content(content: dict, slide_num: int, filepath: str, filename: str) -> None:
+    img  = _make_base(seed=slide_num + 10)
+    draw = ImageDraw.Draw(img)
+    font_num  = _load_font("Lora", "Regular", 28)
+    indicator = f"0{slide_num + 1} / 06"
+    bbox = draw.textbbox((0, 0), indicator, font=font_num)
+    draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, 60), indicator, font=font_num, fill=(GOLD[0], GOLD[1], GOLD[2], 128))
+    font_title   = _load_font("Cinzel", "Bold", 66)
+    title_bottom = _draw_centered_text(draw, content.get("title", ""), font_title, WHITE, 400, max_width=WIDTH - 100, line_spacing=14)
+    font_body = _load_font("Lora", "Regular", 54)
+    body_y    = max(title_bottom + 60, 650)
+    _draw_centered_text(draw, content.get("body", ""), font_body, CREAM, body_y, max_width=840, line_spacing=18)
+    _draw_gold_line(draw, 1750)
+    img.convert("RGB").save(filepath, format="PNG")
 
 
 def _render_transition(content: dict, filepath: str) -> None:
-    img = _make_base(seed=99, star_count=45)
+    img  = _make_base(seed=99, star_count=45)
     draw = ImageDraw.Draw(img)
-
-    # Large decorative symbol
-    font_symbol = _load_font("Cinzel", "Regular", 128)
-    symbol = "✦"
-    bbox = draw.textbbox((0, 0), symbol, font=font_symbol)
-    x = (WIDTH - (bbox[2] - bbox[0])) // 2
-    draw.text((x, 560), symbol, font=font_symbol, fill=GOLD)
-
-    # Title
+    _draw_diamond(draw, WIDTH // 2, 620, 60)
     font_title = _load_font("Cinzel", "Bold", 60)
-    title = content.get("title", "")
-    _draw_centered_text(draw, title, font_title, WHITE, 780, max_width=WIDTH - 100, line_spacing=16)
-
-    # Body
+    _draw_centered_text(draw, content.get("title", ""), font_title, WHITE, 780, max_width=WIDTH - 100, line_spacing=16)
     font_body = _load_font("Lora", "Italic", 40)
-    body = content.get("body", "")
-    _draw_centered_text(draw, body, font_body, CREAM, 940, max_width=900, line_spacing=18)
-
+    _draw_centered_text(draw, content.get("body", ""), font_body, CREAM, 940, max_width=900, line_spacing=18)
     img.convert("RGB").save(filepath, format="PNG")
-    logger.info(f"[render] 05_transition.png ✓")
 
 
-def _render_cta(content: dict, filepath: str) -> None:
-    img = _make_base(seed=6)
-    draw = ImageDraw.Draw(img)
+def _draw_rounded_rect_filled(draw, cx, cy, w, h, fill_color, radius=50):
+    x0, y0 = cx - w // 2, cy - h // 2
+    draw.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=radius, fill=fill_color)
 
-    # Title
-    font_title = _load_font("Cinzel", "Bold", 56)
-    title = content.get("title", "")
-    _draw_centered_text(draw, title, font_title, WHITE, 640, max_width=WIDTH - 100, line_spacing=16)
 
-    cx = WIDTH // 2
+def _draw_rounded_rect_outline(draw, cx, cy, w, h, outline_color, width=3, radius=45):
+    x0, y0 = cx - w // 2, cy - h // 2
+    draw.rounded_rectangle([x0, y0, x0 + w, y0 + h], radius=radius, outline=outline_color, width=width)
 
-    # CTA button 1 — filled violet
-    _draw_rounded_rect_filled(draw, cx, 950, 800, 100, ACCENT_VIOLET, radius=50)
-    font_cta1 = _load_font("Lora", "Bold", 40)
-    cta1 = content.get("cta1", "💬 Parler à mon guide")
-    bbox = draw.textbbox((0, 0), cta1, font=font_cta1)
-    bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text((cx - bw // 2, 950 - bh // 2), cta1, font=font_cta1, fill=WHITE)
 
-    # CTA button 2 — outlined gold
-    _draw_rounded_rect_outline(draw, cx, 1100, 700, 90, GOLD, width=3, radius=45)
-    font_cta2 = _load_font("Lora", "Regular", 36)
-    cta2 = content.get("cta2", "✨ auryel.fr")
-    bbox = draw.textbbox((0, 0), cta2, font=font_cta2)
-    bw, bh = bbox[2] - bbox[0], bbox[3] - bbox[1]
-    draw.text((cx - bw // 2, 1100 - bh // 2), cta2, font=font_cta2, fill=GOLD)
+# ---------------------------------------------------------------------------
+# Preview sheet
+# ---------------------------------------------------------------------------
 
-    # Watermark "Auryel ✦"
-    font_wm = _load_font("Lora", "Regular", 24)
-    wm = "Auryel ✦"
-    wm_color = (GOLD[0], GOLD[1], GOLD[2], 154)  # 60% of 255 ≈ 154
-    bbox = draw.textbbox((0, 0), wm, font=font_wm)
-    x = (WIDTH - (bbox[2] - bbox[0])) // 2
-    draw.text((x, 1750), wm, font=font_wm, fill=wm_color)
-
-    img.convert("RGB").save(filepath, format="PNG")
-    logger.info(f"[render] 06_cta.png ✓")
+def render_preview_sheet(image_paths: list, output_dir: str) -> str:
+    """Assemble 4 slide thumbnails into a 2×2 preview sheet."""
+    THUMB_W, THUMB_H = 540, 960
+    GAP     = 6
+    sheet   = Image.new("RGB", (THUMB_W * 2 + GAP, THUMB_H * 2 + GAP), (5, 5, 12))
+    positions = [
+        (0, 0),
+        (THUMB_W + GAP, 0),
+        (0, THUMB_H + GAP),
+        (THUMB_W + GAP, THUMB_H + GAP),
+    ]
+    for i, path in enumerate(image_paths[:4]):
+        try:
+            thumb = Image.open(path).convert("RGB").resize((THUMB_W, THUMB_H), Image.LANCZOS)
+            sheet.paste(thumb, positions[i])
+        except Exception as exc:
+            logger.warning(f"[preview] Could not load {path}: {exc}")
+    out_path = str(Path(output_dir) / "preview_sheet.png")
+    sheet.save(out_path, format="PNG")
+    logger.info("[render] preview_sheet.png ✓")
+    return out_path
 
 
 # ---------------------------------------------------------------------------
@@ -397,55 +460,40 @@ def _render_cta(content: dict, filepath: str) -> None:
 
 def render_carousel(content: dict, output_dir: str) -> list[str]:
     """
-    Renders 6 PNG slides to output_dir based on content dict.
-
-    Args:
-        content: Parsed content.json dict with 'slides' list.
-        output_dir: Directory path where PNG files will be written.
-
-    Returns:
-        List of absolute file paths for the 6 rendered PNGs.
+    Renders 4 PNG slides + preview_sheet.png to output_dir.
+    Layout read from content["layout"] (oracle | minimal | mystique).
+    Returns list of all rendered paths (slides + preview).
     """
-    out = Path(output_dir)
+    out    = Path(output_dir)
     out.mkdir(parents=True, exist_ok=True)
 
+    layout = content.get("layout", "oracle")
     slides = content.get("slides", [])
-    if len(slides) < 6:
-        logger.warning(f"[render] Expected 6 slides, got {len(slides)} — output will be incomplete")
-    output_files: list[str] = []
+    if len(slides) < 4:
+        logger.warning(f"[render] Expected 4 slides, got {len(slides)}")
 
-    # Map slide types to filenames and renderers
-    file_names = [
-        "01_cover.png",
-        "02_slide.png",
-        "03_slide.png",
-        "04_slide.png",
-        "05_transition.png",
-        "06_cta.png",
-    ]
-
-    content_slide_num = 1  # counter for content slides (1-3)
+    file_names  = ["01_cover.png", "02_content_1.png", "03_content_2.png", "04_cta.png"]
+    slide_files: list[str] = []
 
     for idx, slide in enumerate(slides):
-        if idx >= 6:
+        if idx >= 4:
             break
-        slide_type = slide.get("type", "content")
-        filename = file_names[idx]
-        filepath = str(out / filename)
+        slide_type = slide.get("type", "")
+        filepath   = str(out / file_names[idx])
 
-        if slide_type == "cover":
-            _render_cover(slide, filepath)
-        elif slide_type == "content":
-            _render_content(slide, content_slide_num, filepath, filename)
-            content_slide_num += 1
-        elif slide_type == "transition":
-            _render_transition(slide, filepath)
+        if slide_type in ("hook", "cover"):
+            _render_cover(slide, filepath, layout)
+        elif slide_type in ("message", "content"):
+            _render_message(slide, filepath, layout)
+        elif slide_type == "revelation":
+            _render_revelation(slide, filepath, layout)
         elif slide_type == "cta":
-            _render_cta(slide, filepath)
+            _render_cta(slide, filepath, layout)
         else:
             logger.warning(f"[render] Unknown slide type '{slide_type}' at index {idx}, skipping.")
             continue
 
-        output_files.append(filepath)
+        slide_files.append(filepath)
 
-    return output_files
+    preview = render_preview_sheet(slide_files, str(out))
+    return slide_files + [preview]

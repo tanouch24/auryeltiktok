@@ -1,81 +1,143 @@
-import re
 import json
 import logging
+from datetime import date
+from pathlib import Path
 
 import anthropic
 
+from generators.utils import (
+    extract_json, score_hook, enforce_limits, estimate_read_time,
+    emotion_score, curiosity_score,
+    get_forbidden_words, save_word_history, pick_layout,
+)
+
 logger = logging.getLogger(__name__)
 
+HOOKS_FILE = Path(__file__).resolve().parent.parent / "data" / "hooks.json"
+
 FALLBACK = {
-    "serie": "Phrase de motivation spirituelle",
+    "serie":  "Phrase de motivation spirituelle",
     "moment": "matin",
+    "layout": "oracle",
     "slides": [
-        {"type": "cover", "title": "Tu es guidé·e", "subtitle": "Commence ta journée avec cette lumière"},
-        {"type": "content", "num": 1, "icon": "✨", "title": "L'univers conspire pour toi", "body": "Chaque matin est une nouvelle invitation à avancer. Tu n'es jamais seul·e sur ce chemin."},
-        {"type": "content", "num": 2, "icon": "🌙", "title": "Ta lumière est unique", "body": "Ce que tu apportes au monde ne peut venir que de toi. Fais confiance à ce que tu ressens."},
-        {"type": "content", "num": 3, "icon": "💫", "title": "Chaque étape compte", "body": "Même les petits pas te rapprochent de là où tu dois aller. L'univers voit ton chemin entier."},
-        {"type": "transition", "title": "Et si aujourd'hui était le jour ?", "body": "Le moment est maintenant. Tu es prêt·e."},
-        {"type": "cta", "title": "Reçois un message personnalisé de ton guide", "cta1": "💬 Parler à mon guide", "cta2": "✨ auryel.fr"}
-    ]
+        {
+            "type":     "cover",
+            "title":    "Ce message n'est pas arrivé par hasard",
+            "subtitle": "Motivation spirituelle",
+        },
+        {
+            "type":  "content",
+            "num":   1,
+            "title": "Tu n'es pas oublié·e",
+            "body":  "Même quand rien ne bouge,\nquelque chose travaille déjà\nen silence pour toi.",
+        },
+        {
+            "type":  "content",
+            "num":   2,
+            "title": "La réponse arrive",
+            "body":  "Observe ce qui revient dans ta vie.\nCe n'est pas un hasard.",
+        },
+        {
+            "type":  "cta",
+            "title": "Quel message t'attend ce matin ?",
+            "cta":   "🔗 Lien en bio",
+        },
+    ],
 }
 
 
-def _extract_json(text: str) -> dict:
-    """Extract JSON from a Claude response that may have markdown fences."""
-    match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-    if match:
-        return json.loads(match.group(1))
-    return json.loads(text.strip())
+def _load_used_hooks() -> list:
+    try:
+        with open(HOOKS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
 
 
-def _validate(content: dict, module_name: str) -> dict:
-    slides = content.get("slides", [])
-    if len(slides) != 6:
-        logger.warning(f"[{module_name}] Invalid slide count ({len(slides)}), using fallback")
-        return FALLBACK
-    return content
+def _save_hook(hook: str) -> None:
+    used = _load_used_hooks()
+    if hook not in used:
+        used.append(hook)
+        HOOKS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(HOOKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(used, f, ensure_ascii=False, indent=2)
 
 
 def generate(api_key: str) -> dict:
-    """Returns a content.json-compatible dict with exactly 6 slides."""
+    """Returns a content.json-compatible dict with exactly 4 slides."""
+    today         = date.today().isoformat()
+    layout        = pick_layout(f"matin-{today}")
+    forbidden     = get_forbidden_words()
+    forbidden_str = ", ".join(forbidden) if forbidden else "aucun"
+
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        prompt = """Génère un carousel de motivation spirituelle matinale en JSON.
+        prompt = f"""Génère un carousel TikTok de motivation spirituelle matinale en JSON.
 
-Le carousel doit avoir exactement 6 slides dans cet ordre :
-1. cover : titre = courte phrase inspirante (ex: "Tu es guidé·e"), subtitle = invitation douce
-2. content num=1 : icon (un emoji), title (5-8 mots inspirants), body (2-3 phrases max, doux et inspirant)
-3. content num=2 : icon (un emoji), title (5-8 mots inspirants), body (2-3 phrases max, doux et inspirant)
-4. content num=3 : icon (un emoji), title (5-8 mots inspirants), body (2-3 phrases max, doux et inspirant)
-5. transition : title = question ou affirmation réflexive, body = pensée de clôture douce
-6. cta : title = invite l'utilisateur à contacter son guide, cta1 = "💬 Parler à mon guide", cta2 = "✨ auryel.fr"
+STRUCTURE : exactement 4 slides.
 
-Thème : motivation spirituelle matinale. Ton : doux, positif, inspirant. Jamais culpabilisant.
-Tout le texte doit être en français.
+- cover : title = accroche percutante max 8 mots (fait arrêter le scroll), subtitle = "Motivation spirituelle"
+- content num 1 : message principal — title max 8 mots + body max 30 mots, phrases courtes, retours à la ligne
+- content num 2 : révélation / conseil — title max 8 mots + body max 25 mots, conclusion émotionnelle
+- cta : title max 10 mots (question directe qui crée l'envie de cliquer)
 
-Retourne uniquement du JSON valide avec cette structure :
-{
+MOTS INTERDITS : {forbidden_str}
+Ton : direct, émotionnel, tutoiement. Jamais culpabilisant. Tout en français.
+
+JSON uniquement :
+{{
   "serie": "Phrase de motivation spirituelle",
   "moment": "matin",
-  "slides": [...]
-}"""
+  "slides": [
+    {{"type": "cover",   "title": "...", "subtitle": "Motivation spirituelle"}},
+    {{"type": "content", "num": 1, "title": "...", "body": "..."}},
+    {{"type": "content", "num": 2, "title": "...", "body": "..."}},
+    {{"type": "cta",     "title": "...", "cta": "🔗 Lien en bio"}}
+  ]
+}}"""
 
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
+            max_tokens=700,
+            messages=[{"role": "user", "content": prompt}],
         )
 
-        raw = message.content[0].text
-        content = _extract_json(raw)
-        result = _validate(content, "motivation")
-        if result is not FALLBACK:
-            logger.info("[motivation] Generated via API")
-        else:
-            logger.warning("[motivation] Using fallback (validation failed)")
-        return result
+        raw     = message.content[0].text
+        content = extract_json(raw)
+
+        slides = content.get("slides", [])
+        if len(slides) != 4:
+            logger.warning(f"[motivation] Expected 4 slides, got {len(slides)}, using fallback")
+            return _apply_fallback(layout)
+
+        # Enforce CTA field
+        if slides[3].get("type") == "cta":
+            slides[3]["cta"] = "🔗 Lien en bio"
+
+        content = enforce_limits(content)
+        content["layout"]           = layout
+        content["hook_score"]       = score_hook(slides[0].get("title", ""))
+        content["read_time_seconds"]= estimate_read_time(slides)
+        content["emotion_score"]    = emotion_score(slides)
+        content["curiosity_score"]  = curiosity_score(slides)
+
+        _save_hook(slides[0].get("title", ""))
+        save_word_history("matin", slides)
+        logger.info("[motivation] Generated via API")
+        return content
 
     except Exception as e:
         logger.warning(f"[motivation] Using fallback (error: {e})")
-        return FALLBACK
+        return _apply_fallback(layout)
+
+
+def _apply_fallback(layout: str) -> dict:
+    FALLBACK["layout"]           = layout
+    FALLBACK["hook_score"]       = score_hook(FALLBACK["slides"][0]["title"])
+    FALLBACK["read_time_seconds"]= estimate_read_time(FALLBACK["slides"])
+    FALLBACK["emotion_score"]    = emotion_score(FALLBACK["slides"])
+    FALLBACK["curiosity_score"]  = curiosity_score(FALLBACK["slides"])
+    save_word_history("matin", FALLBACK["slides"])
+    return FALLBACK

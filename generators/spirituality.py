@@ -1,61 +1,67 @@
-import re
 import json
 import random
 import logging
+from datetime import date
 from pathlib import Path
 
 import anthropic
 
+from generators.utils import (
+    extract_json, score_hook, enforce_limits, estimate_read_time,
+    emotion_score, curiosity_score,
+    get_forbidden_words, save_word_history, pick_layout,
+)
+
 logger = logging.getLogger(__name__)
 
 STATE_FILE = Path(__file__).resolve().parent.parent / "data" / "used_topics.json"
+HOOKS_FILE = Path(__file__).resolve().parent.parent / "data" / "hooks.json"
 
 TOPICS = [
     "anges gardiens", "archanges", "numérologie", "tarot",
     "chakras", "lune", "signes du zodiaque", "rêves",
     "synchronicités", "protection spirituelle", "guérison",
-    "abondance", "karma"
+    "abondance", "karma",
 ]
 
 FALLBACK = {
-    "serie": "Anges gardiens",
+    "serie":  "Anges gardiens",
     "moment": "soir",
+    "layout": "oracle",
     "slides": [
-        {"type": "cover", "title": "Ton ange gardien te parle", "subtitle": "Ce soir, écoute les signes"},
-        {"type": "content", "num": 1, "icon": "👼", "title": "Il est toujours là", "body": "Ton ange gardien veille sur toi à chaque instant, même dans les moments de doute. Tu n'es jamais seul·e."},
-        {"type": "content", "num": 2, "icon": "🔢", "title": "Les nombres répétés", "body": "Quand tu vois 11:11 ou 333, c'est un signe. Ton ange attire ton attention pour te dire que tu es sur le bon chemin."},
-        {"type": "content", "num": 3, "icon": "🦋", "title": "Les signes du quotidien", "body": "Une plume, une pensée soudaine, une coïncidence... Ces petits miracles sont ses messages pour toi."},
-        {"type": "transition", "title": "Quel signe as-tu reçu aujourd'hui ?", "body": "Prends un moment pour y réfléchir. Ton ange attend ta réponse."},
-        {"type": "cta", "title": "Parle à ton guide spirituel ce soir", "cta1": "💬 Parler à mon guide", "cta2": "✨ auryel.fr"}
-    ]
+        {
+            "type":     "cover",
+            "title":    "Lis ceci avant de dormir ce soir",
+            "subtitle": "Anges gardiens",
+        },
+        {
+            "type":  "content",
+            "num":   1,
+            "title": "Vous n'êtes jamais seul·e",
+            "body":  "En ce moment même, votre ange veille.\nLes signes autour de vous\nne sont pas des coïncidences.",
+        },
+        {
+            "type":  "content",
+            "num":   2,
+            "title": "Un message pour vous ce soir",
+            "body":  "Quelqu'un dans l'invisible\npense encore à vous en ce moment.",
+        },
+        {
+            "type":  "cta",
+            "title": "Quel message vous est destiné ?",
+            "cta":   "🔗 Lien en bio",
+        },
+    ],
 }
-
-
-def _extract_json(text: str) -> dict:
-    """Extract JSON from a Claude response that may have markdown fences."""
-    match = re.search(r"```(?:json)?\s*([\s\S]+?)\s*```", text)
-    if match:
-        return json.loads(match.group(1))
-    return json.loads(text.strip())
-
-
-def _validate(content: dict, module_name: str) -> dict:
-    slides = content.get("slides", [])
-    if len(slides) != 6:
-        logger.warning(f"[{module_name}] Invalid slide count ({len(slides)}), using fallback")
-        return FALLBACK
-    return content
 
 
 def _load_used() -> list:
     try:
         with open(STATE_FILE, "r", encoding="utf-8") as f:
             data = json.load(f)
-            if isinstance(data, list):
-                return data
+            return data if isinstance(data, list) else []
     except (FileNotFoundError, json.JSONDecodeError):
-        pass
-    return []
+        return []
 
 
 def _save_used(used: list) -> None:
@@ -64,56 +70,105 @@ def _save_used(used: list) -> None:
         json.dump(used, f)
 
 
+def _load_used_hooks() -> list:
+    try:
+        with open(HOOKS_FILE, "r", encoding="utf-8") as f:
+            data = json.load(f)
+            return data if isinstance(data, list) else []
+    except (FileNotFoundError, json.JSONDecodeError):
+        return []
+
+
+def _save_hook(hook: str) -> None:
+    used = _load_used_hooks()
+    if hook not in used:
+        used.append(hook)
+        with open(HOOKS_FILE, "w", encoding="utf-8") as f:
+            json.dump(used, f, ensure_ascii=False, indent=2)
+
+
 def generate(api_key: str) -> dict:
-    """Returns a content.json-compatible dict with exactly 6 slides."""
-    used = _load_used()
+    """Returns a content.json-compatible dict with exactly 4 slides."""
+    today         = date.today().isoformat()
+    layout        = pick_layout(f"soir-{today}")
+    forbidden     = get_forbidden_words()
+    forbidden_str = ", ".join(forbidden) if forbidden else "aucun"
+
+    used      = _load_used()
     available = [t for t in TOPICS if t not in used]
     if not available:
-        used = []
+        used      = []
         available = list(TOPICS)
-
     topic = random.choice(available)
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
 
-        prompt = f"""Génère un carousel spirituel du soir sur le thème "{topic}" en JSON.
+        prompt = f"""Génère un carousel TikTok de voyance spirituelle du soir sur "{topic}" en JSON.
 
-Le carousel doit avoir exactement 6 slides dans cet ordre :
-1. cover : title = titre accrocheur lié au thème "{topic}", subtitle = invitation mystérieuse pour ce soir
-2. content num=1 : icon (un emoji), title (5-8 mots), body (2-3 phrases sur un signe/message/révélation lié à "{topic}")
-3. content num=2 : icon (un emoji), title (5-8 mots), body (2-3 phrases sur un deuxième aspect de "{topic}")
-4. content num=3 : icon (un emoji), title (5-8 mots), body (2-3 phrases sur un troisième aspect de "{topic}")
-5. transition : title = question ou affirmation invitant à la réflexion, body = pensée de clôture pour la nuit
-6. cta : title = invite à parler à son guide spirituel ce soir, cta1 = "💬 Parler à mon guide", cta2 = "✨ auryel.fr"
+STRUCTURE : exactement 4 slides.
 
-Ton : mystérieux, profond, engageant, jamais anxiogène. Tout le texte doit être en français.
+- cover : title = accroche mystérieuse max 8 mots (fait arrêter le scroll), subtitle = "{topic.capitalize()}"
+- content num 1 : révélation principale liée à {topic} — title max 8 mots + body max 30 mots
+- content num 2 : message personnel / signe — title max 8 mots + body max 25 mots (ouvre une boucle)
+- cta : title max 10 mots (question directe créant de la curiosité)
 
-Retourne uniquement du JSON valide avec cette structure :
+MOTS INTERDITS : {forbidden_str}
+Ton : vouvoiement, mystérieux, révélation cosmique, bienveillant. Tout en français.
+
+JSON uniquement :
 {{
   "serie": "{topic.capitalize()}",
   "moment": "soir",
-  "slides": [...]
+  "slides": [
+    {{"type": "cover",   "title": "...", "subtitle": "{topic.capitalize()}"}},
+    {{"type": "content", "num": 1, "title": "...", "body": "..."}},
+    {{"type": "content", "num": 2, "title": "...", "body": "..."}},
+    {{"type": "cta",     "title": "...", "cta": "🔗 Lien en bio"}}
+  ]
 }}"""
 
         message = client.messages.create(
             model="claude-haiku-4-5-20251001",
-            max_tokens=1024,
-            messages=[{"role": "user", "content": prompt}]
+            max_tokens=700,
+            messages=[{"role": "user", "content": prompt}],
         )
 
-        raw = message.content[0].text
-        content = _extract_json(raw)
-        result = _validate(content, "spirituality")
+        raw     = message.content[0].text
+        content = extract_json(raw)
 
-        if result is not FALLBACK:
-            used.append(topic)
-            _save_used(used)
-            logger.info("[spirituality] Generated via API")
-        else:
-            logger.warning("[spirituality] Using fallback (validation failed)")
-        return result
+        slides = content.get("slides", [])
+        if len(slides) != 4:
+            logger.warning(f"[spirituality] Expected 4 slides, got {len(slides)}, using fallback")
+            return _apply_fallback(layout)
+
+        if slides[3].get("type") == "cta":
+            slides[3]["cta"] = "🔗 Lien en bio"
+
+        content = enforce_limits(content)
+        content["layout"]           = layout
+        content["hook_score"]       = score_hook(slides[0].get("title", ""))
+        content["read_time_seconds"]= estimate_read_time(slides)
+        content["emotion_score"]    = emotion_score(slides)
+        content["curiosity_score"]  = curiosity_score(slides)
+
+        used.append(topic)
+        _save_used(used)
+        _save_hook(slides[0].get("title", ""))
+        save_word_history("soir", slides)
+        logger.info("[spirituality] Generated via API")
+        return content
 
     except Exception as e:
         logger.warning(f"[spirituality] Using fallback (error: {e})")
-        return FALLBACK
+        return _apply_fallback(layout)
+
+
+def _apply_fallback(layout: str) -> dict:
+    FALLBACK["layout"]           = layout
+    FALLBACK["hook_score"]       = score_hook(FALLBACK["slides"][0]["title"])
+    FALLBACK["read_time_seconds"]= estimate_read_time(FALLBACK["slides"])
+    FALLBACK["emotion_score"]    = emotion_score(FALLBACK["slides"])
+    FALLBACK["curiosity_score"]  = curiosity_score(FALLBACK["slides"])
+    save_word_history("soir", FALLBACK["slides"])
+    return FALLBACK

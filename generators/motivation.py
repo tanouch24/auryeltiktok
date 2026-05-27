@@ -76,29 +76,29 @@ def generate(api_key: str) -> dict:
 
         prompt = f"""Génère un carousel TikTok de motivation spirituelle matinale en JSON.
 
-STRUCTURE RÉTENTION — exactement 4 slides :
+PROGRESSION OBLIGATOIRE — exactement 4 slides :
 
-SLIDE 1 — cover (STOP SCROLL) :
-  title = accroche ultra-spécifique max 8 mots, crée curiosité immédiate
-  INTERDIT : "Tu es fort", "Tu peux le faire", "Tu es capable", tout générique
-  PRÉFÉRER : révélation inattendue, secret implicite, question suggestive
+SLIDE 1 — cover (INTRIGUE) :
+  title = accroche élégante max 8 mots, crée une curiosité douce et immédiate
+  INTERDIT ABSOLUMENT : "peur", "entités", "blocages", "manipulation", urgence artificielle
+  INTERDIT : générique ("tu es fort", "tu peux le faire", "tu es capable")
+  PRÉFÉRER : révélation intérieure, secret personnel, question suspendue
   Ex : "Ce que tu ignores encore sur toi" / "Il y a une raison que tu lis ceci"
   subtitle = "Motivation spirituelle"
 
 SLIDE 2 — content num 1 (ÉMOTION) :
-  title max 8 mots — douleur réelle ou espoir concret, aucune banalité
-  body max 20 mots — phrases de 5–7 mots, chaque ligne = choc émotionnel, retours à la ligne
+  title max 8 mots — espoir concret ou vérité intime, jamais banal
+  body max 17 mots — 2–3 phrases courtes, chaque ligne touche directement, retours à la ligne
 
-SLIDE 3 — content num 2 (CURIOSITÉ) :
+SLIDE 3 — content num 2 (RÉVÉLATION) :
   title max 8 mots
-  body max 18 mots — révélation inattendue ou vérité suspendue, ne pas tout dire
-  Doit créer une question mentale, une envie de continuer
+  body max 15 mots — vérité suspendue ou révélation douce, ne pas tout livrer
 
-SLIDE 4 — cta (ACTION) :
-  title max 10 mots — question précise, jamais générique
+SLIDE 4 — cta (OUVERTURE) :
+  title max 10 mots — invitation douce, pas d'urgence, ouverture
 
-MOTS INTERDITS : {forbidden_str}
-STYLE : phrases courtes, directes, aucune généralité, tutoiement, tout en français.
+TON GLOBAL : élégant, mystique, apaisant, haut de gamme. Tutoiement. Aucune violence ou anxiété.
+MOTS INTERDITS PARTOUT : {forbidden_str}, peur, entités, blocages, manipulation
 
 JSON uniquement :
 {{
@@ -108,7 +108,7 @@ JSON uniquement :
     {{"type": "cover",   "title": "...", "subtitle": "Motivation spirituelle"}},
     {{"type": "content", "num": 1, "title": "...", "body": "..."}},
     {{"type": "content", "num": 2, "title": "...", "body": "..."}},
-    {{"type": "cta",     "title": "...", "cta": "🔗 Lien en bio"}}
+    {{"type": "cta",     "title": "...", "cta": "Continuer"}}
   ]
 }}"""
 
@@ -126,9 +126,8 @@ JSON uniquement :
             logger.warning(f"[motivation] Expected 4 slides, got {len(slides)}, using fallback")
             return _apply_fallback(layout)
 
-        # Enforce CTA field
         if slides[3].get("type") == "cta":
-            slides[3]["cta"] = "🔗 Lien en bio"
+            slides[3]["cta"] = "Continuer"
 
         content = enforce_limits(content)
         content["layout"]           = layout

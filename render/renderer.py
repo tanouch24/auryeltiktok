@@ -242,6 +242,12 @@ def _wrap_text(text: str, font: ImageFont.FreeTypeFont, max_width: int, draw: Im
                 lines.append(word)
     if current:
         lines.append(" ".join(current))
+    # Anti-widow: last line must have ≥2 words
+    if len(lines) > 1 and len(lines[-1].split()) == 1:
+        prev = lines[-2].split()
+        if len(prev) > 1:
+            lines[-2] = " ".join(prev[:-1])
+            lines[-1] = prev[-1] + " " + lines[-1]
     return lines
 
 
@@ -253,9 +259,12 @@ def _draw_centered_text(
     y: int,
     max_width: int = WIDTH - 80,
     line_spacing: int = 20,
+    max_lines: int = 0,
 ) -> int:
     """Draw word-wrapped centered text. Returns y after last line."""
     lines = _wrap_text(text, font, max_width, draw)
+    if max_lines:
+        lines = lines[:max_lines]
     for line in lines:
         bbox = draw.textbbox((0, 0), line, font=font)
         x = (WIDTH - (bbox[2] - bbox[0])) // 2
@@ -325,13 +334,15 @@ def _render_message(content: dict, filepath: str, layout: str = "oracle") -> Non
     font_title   = _load_font("Cinzel", "Bold", 66)
     title        = content.get("title", "")
     title_bottom = _draw_centered_text(
-        draw, title, font_title, title_color, 480, max_width=WIDTH - 120, line_spacing=16  # was 560
+        draw, title, font_title, title_color, 480,
+        max_width=WIDTH - 120, line_spacing=16, max_lines=3,
     )
 
     font_body = _load_font("Lora", body_style, body_size)
     body      = content.get("body", "")
-    body_y    = max(title_bottom + 60, 650)   # was 70 / 720
-    _draw_centered_text(draw, body, font_body, CREAM, body_y, max_width=800, line_spacing=28)  # narrower, more air
+    body_y    = max(title_bottom + 60, 650)
+    _draw_centered_text(draw, body, font_body, CREAM, body_y,
+                        max_width=800, line_spacing=28, max_lines=5)
 
     if layout == "oracle":
         _draw_gold_line(draw, 1750, length=200, thickness=4)
@@ -392,7 +403,8 @@ def _render_cta(content: dict, filepath: str, layout: str = "oracle") -> None:
     font_title   = _load_font("Cinzel", "Bold", 64)
     title        = content.get("title", "")
     title_bottom = _draw_centered_text(
-        draw, title, font_title, WHITE, title_y, max_width=WIDTH - 120, line_spacing=18
+        draw, title, font_title, WHITE, title_y,
+        max_width=WIDTH - 120, line_spacing=18, max_lines=3,
     )
 
     line_len   = 200 if layout == "oracle" else (120 if layout == "minimal" else 160)

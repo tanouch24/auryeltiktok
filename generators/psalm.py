@@ -42,7 +42,7 @@ FALLBACK = {
         {
             "type":  "cta",
             "title": "Reçois ton message du jour",
-            "cta":   "Lien en bio",
+            "cta":   "Lire la suite",
         },
     ],
 }
@@ -99,26 +99,27 @@ def generate(api_key: str) -> dict:
 
         prompt = f"""Génère un carousel TikTok pour le Psaume {psalm_number} en JSON.
 
-STRUCTURE RÉTENTION — exactement 4 slides :
+PROGRESSION OBLIGATOIRE — exactement 4 slides :
 
-SLIDE 1 — cover (STOP SCROLL) :
-  title = accroche max 8 mots, JAMAIS "Psaume {psalm_number}", crée désir immédiat de lire
+SLIDE 1 — cover (INTRIGUE) :
+  title = accroche élégante max 8 mots, JAMAIS "Psaume {psalm_number}", crée désir immédiat de lire
+  INTERDIT ABSOLUMENT : "peur", "entités", "blocages", "manipulation", urgence artificielle
   Ex : "Ces mots ont été écrits pour toi" / "Ce que Dieu dit quand tu doutes"
   subtitle = "Psaume {psalm_number}"
 
 SLIDE 2 — content num 1 (ÉMOTION) :
-  title max 8 mots — phrase forte tirée du psaume
-  body max 18 mots — 1 verset court entre guillemets + 1 phrase d'interprétation percutante
+  title max 8 mots — phrase forte et intimiste tirée du psaume
+  body max 15 mots — 1 verset court entre guillemets + 1 phrase d'interprétation douce
 
-SLIDE 3 — content num 2 (CURIOSITÉ) :
+SLIDE 3 — content num 2 (RÉVÉLATION) :
   title max 8 mots
-  body max 15 mots — application personnelle ultra-courte, ouvre une boucle
+  body max 13 mots — application personnelle ultra-courte, révélation suspendue
 
-SLIDE 4 — cta (ACTION) :
-  title max 10 mots — question directe
+SLIDE 4 — cta (OUVERTURE) :
+  title max 10 mots — invitation douce
 
-MOTS INTERDITS : {forbidden_str}
-STYLE : ultra-court, chaque mot compte, tutoiement, sacré et intime, tout en français.
+TON GLOBAL : sacré, intime, apaisant, élégant. Tutoiement. Tout en français.
+MOTS INTERDITS PARTOUT : {forbidden_str}, peur, entités, blocages, manipulation
 
 JSON uniquement :
 {{
@@ -128,7 +129,7 @@ JSON uniquement :
     {{"type": "cover",   "title": "...", "subtitle": "Psaume {psalm_number}"}},
     {{"type": "content", "num": 1, "title": "...", "body": "..."}},
     {{"type": "content", "num": 2, "title": "...", "body": "..."}},
-    {{"type": "cta",     "title": "...", "cta": "🔗 Lien en bio"}}
+    {{"type": "cta",     "title": "...", "cta": "Lire la suite"}}
   ]
 }}"""
 
@@ -147,7 +148,7 @@ JSON uniquement :
             return _apply_fallback(layout)
 
         if slides[3].get("type") == "cta":
-            slides[3]["cta"] = "🔗 Lien en bio"
+            slides[3]["cta"] = "Lire la suite"
 
         content = enforce_limits(content)
         content["layout"]           = layout

@@ -106,28 +106,29 @@ def generate(api_key: str) -> dict:
 
         prompt = f"""Génère un carousel TikTok de voyance spirituelle du soir sur "{topic}" en JSON.
 
-STRUCTURE RÉTENTION — exactement 4 slides :
+PROGRESSION OBLIGATOIRE — exactement 4 slides :
 
-SLIDE 1 — cover (STOP SCROLL) :
-  title = accroche mystérieuse max 8 mots, crée intrigue immédiate, très spécifique
-  INTERDIT : générique, flou, "votre avenir", "un message pour vous"
-  PRÉFÉRER : révélation directe, chiffre, moment précis
-  Ex : "Ce que vos {topic} tentent de vous dire ce soir" / "Le signe que vous attendiez"
+SLIDE 1 — cover (INTRIGUE) :
+  title = accroche mystérieuse et élégante max 8 mots, crée une intrigue douce et immédiate
+  INTERDIT ABSOLUMENT : "peur", "entités", "blocages", "manipulation", urgence artificielle, menace
+  INTERDIT : générique, "votre avenir", "un message pour vous"
+  PRÉFÉRER : révélation intérieure, signe subtil, moment précis
+  Ex : "Ce que {topic} révèle sur vous ce soir" / "Le signe que vous attendiez"
   subtitle = "{topic.capitalize()}"
 
 SLIDE 2 — content num 1 (ÉMOTION) :
-  title max 8 mots — révélation forte liée à {topic}
-  body max 20 mots — phrases courtes, impact émotionnel, vouvoiement, retours à la ligne
+  title max 8 mots — révélation douce liée à {topic}
+  body max 17 mots — phrases courtes, impact émotionnel bienveillant, vouvoiement, retours à la ligne
 
-SLIDE 3 — content num 2 (CURIOSITÉ) :
+SLIDE 3 — content num 2 (RÉVÉLATION) :
   title max 8 mots
-  body max 15 mots — vérité suspendue, ouvre une boucle mentale, ne pas tout révéler
+  body max 13 mots — vérité suspendue et apaisante, ouvre une boucle sans créer d'anxiété
 
-SLIDE 4 — cta (ACTION) :
-  title max 10 mots — question précise qui donne envie de cliquer
+SLIDE 4 — cta (OUVERTURE) :
+  title max 10 mots — invitation élégante, pas d'urgence
 
-MOTS INTERDITS : {forbidden_str}
-STYLE : vouvoiement, mystérieux, chaque phrase compte, tout en français.
+TON GLOBAL : mystique, apaisant, haut de gamme, bienveillant. Vouvoiement. Tout en français.
+MOTS INTERDITS PARTOUT : {forbidden_str}, peur, entités, blocages, manipulation
 
 JSON uniquement :
 {{
@@ -137,7 +138,7 @@ JSON uniquement :
     {{"type": "cover",   "title": "...", "subtitle": "{topic.capitalize()}"}},
     {{"type": "content", "num": 1, "title": "...", "body": "..."}},
     {{"type": "content", "num": 2, "title": "...", "body": "..."}},
-    {{"type": "cta",     "title": "...", "cta": "🔗 Lien en bio"}}
+    {{"type": "cta",     "title": "...", "cta": "Découvrir mon message"}}
   ]
 }}"""
 
@@ -156,7 +157,7 @@ JSON uniquement :
             return _apply_fallback(layout)
 
         if slides[3].get("type") == "cta":
-            slides[3]["cta"] = "🔗 Lien en bio"
+            slides[3]["cta"] = "Découvrir mon message"
 
         content = enforce_limits(content)
         content["layout"]           = layout

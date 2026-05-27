@@ -32,11 +32,18 @@ _LAYOUT_GRADIENT = {
     "mystique":{"center": (70, 22, 118), "outer": (6,  3,  16)},
 }
 
-# Star density per layout
+# Star density per layout — reduced 35% vs original for cleaner depth
 _LAYOUT_STARS = {
-    "oracle":  (50, 62),
-    "minimal": (10, 18),
-    "mystique":(28, 38),
+    "oracle":  (32, 42),
+    "minimal": (6,  11),
+    "mystique":(18, 26),
+}
+
+# Focal element positions per layout (cx, cy) — soft moon/halo in upper breathing zone
+_FOCAL_POSITIONS = {
+    "oracle":  (780, 340),   # warm gold glow, upper right
+    "minimal": (740, 290),   # cool white glow, upper right
+    "mystique":(310, 360),   # violet-white glow, upper left
 }
 
 # ---------------------------------------------------------------------------
@@ -121,25 +128,27 @@ def _draw_radial_gradient(img: Image.Image, layout: str = "oracle") -> None:
 
 
 def _draw_stars(img: Image.Image, seed: int = 42, count: int = 40, layout: str = "oracle") -> None:
+    """Two-tier stars: 70% small/distant (dim), 30% large/bright (near) — creates depth."""
     draw = ImageDraw.Draw(img)
     rng  = random.Random(seed)
 
     for _ in range(count):
         x = rng.randint(20, WIDTH - 20)
         y = rng.randint(20, HEIGHT - 20)
+        is_distant = rng.random() < 0.70
 
         if layout == "minimal":
-            size  = rng.randint(1, 2)
+            size  = 1 if is_distant else rng.randint(2, 3)
             shape = "dot"
-            alpha = rng.randint(60, 120)
+            alpha = rng.randint(40, 80) if is_distant else rng.randint(90, 140)
         elif layout == "mystique":
-            size  = rng.randint(2, 4)
-            shape = rng.choice(["dot", "diamond", "diamond"])
-            alpha = rng.randint(100, 180)
+            size  = 1 if is_distant else rng.randint(2, 4)
+            shape = "dot" if is_distant else rng.choice(["dot", "diamond"])
+            alpha = rng.randint(45, 90) if is_distant else rng.randint(130, 195)
         else:  # oracle
-            size  = rng.randint(2, 5)
-            shape = rng.choice(["dot", "diamond"])
-            alpha = rng.randint(150, 220)
+            size  = rng.randint(1, 2) if is_distant else rng.randint(3, 5)
+            shape = "dot" if is_distant else rng.choice(["dot", "diamond"])
+            alpha = rng.randint(50, 95) if is_distant else rng.randint(155, 220)
 
         color = (GOLD[0], GOLD[1], GOLD[2], alpha)
         if shape == "dot":
@@ -177,9 +186,32 @@ def _draw_center_glow(img: Image.Image) -> None:
     img.alpha_composite(overlay)
 
 
+def _draw_focal_element(img: Image.Image, layout: str = "oracle") -> None:
+    """Single atmospheric focal element (soft moon/halo) in the upper breathing zone."""
+    overlay = Image.new("RGBA", (WIDTH, HEIGHT), (0, 0, 0, 0))
+    draw    = ImageDraw.Draw(overlay)
+    cx, cy  = _FOCAL_POSITIONS.get(layout, (780, 340))
+
+    if layout == "minimal":
+        layers = [(90, 6), (58, 11), (30, 16), (12, 20)]
+        base   = (230, 230, 255)
+    elif layout == "mystique":
+        layers = [(110, 5), (72, 10), (38, 16), (15, 22)]
+        base   = (200, 180, 255)
+    else:  # oracle — warm gold-white moon
+        layers = [(100, 7), (65, 13), (33, 20), (13, 26)]
+        base   = (245, 215, 130)
+
+    for radius, alpha in layers:
+        draw.ellipse([cx - radius, cy - radius, cx + radius, cy + radius],
+                     fill=(*base, alpha))
+    img.alpha_composite(overlay)
+
+
 def _make_base(seed: int = 42, star_count: Optional[int] = None, layout: str = "oracle") -> Image.Image:
     img = Image.new("RGBA", (WIDTH, HEIGHT), VOID)
     _draw_radial_gradient(img, layout=layout)
+    _draw_focal_element(img, layout=layout)   # behind stars for depth
     if star_count is None:
         lo, hi = _LAYOUT_STARS.get(layout, (30, 50))
         count = random.Random(seed).randint(lo, hi)
@@ -263,7 +295,7 @@ def _render_cover(content: dict, filepath: str, layout: str = "oracle") -> None:
     title_lines = _wrap_text(title, font_title, WIDTH - 120, draw)
     line_h      = draw.textbbox((0, 0), "Ag", font=font_title)[3]
     block_h     = len(title_lines) * (line_h + 16)
-    ty          = int(HEIGHT * 0.4) - block_h // 2
+    ty          = int(HEIGHT * 0.37) - block_h // 2   # was 0.4 — pulled up
     for line in title_lines:
         bbox = draw.textbbox((0, 0), line, font=font_title)
         draw.text(((WIDTH - (bbox[2] - bbox[0])) // 2, ty), line, font=font_title, fill=title_color)
@@ -293,13 +325,13 @@ def _render_message(content: dict, filepath: str, layout: str = "oracle") -> Non
     font_title   = _load_font("Cinzel", "Bold", 66)
     title        = content.get("title", "")
     title_bottom = _draw_centered_text(
-        draw, title, font_title, title_color, 560, max_width=WIDTH - 120, line_spacing=14
+        draw, title, font_title, title_color, 480, max_width=WIDTH - 120, line_spacing=16  # was 560
     )
 
     font_body = _load_font("Lora", body_style, body_size)
     body      = content.get("body", "")
-    body_y    = max(title_bottom + 70, 720)
-    _draw_centered_text(draw, body, font_body, CREAM, body_y, max_width=860, line_spacing=26)
+    body_y    = max(title_bottom + 60, 650)   # was 70 / 720
+    _draw_centered_text(draw, body, font_body, CREAM, body_y, max_width=800, line_spacing=28)  # narrower, more air
 
     if layout == "oracle":
         _draw_gold_line(draw, 1750, length=200, thickness=4)
@@ -352,10 +384,10 @@ def _render_cta(content: dict, filepath: str, layout: str = "oracle") -> None:
     draw = ImageDraw.Draw(img)
 
     if layout == "mystique":
-        _draw_diamond(draw, WIDTH // 2, 640, 26)
-        title_y = 720
+        _draw_diamond(draw, WIDTH // 2, 580, 26)   # was 640
+        title_y = 660                               # was 720
     else:
-        title_y = 700
+        title_y = 640                               # was 700
 
     font_title   = _load_font("Cinzel", "Bold", 64)
     title        = content.get("title", "")
@@ -367,9 +399,7 @@ def _render_cta(content: dict, filepath: str, layout: str = "oracle") -> None:
     line_thick = 2 if layout == "minimal" else 4
     _draw_gold_line(draw, title_bottom + 40, length=line_len, thickness=line_thick)
 
-    # Single CTA line — strip emoji for font rendering
-    cta_raw  = content.get("cta", "Lien en bio")
-    cta_text = cta_raw.replace("🔗", "").strip()
+    cta_text = content.get("cta", "Lien en bio").replace("🔗", "").strip()
     if cta_text:
         cta_size = 52 if layout == "oracle" else 46
         font_cta = _load_font("Lora", "Italic", cta_size)

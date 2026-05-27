@@ -148,11 +148,13 @@ def estimate_read_time(slides: list) -> float:
     return round(total, 1)
 
 
+_VALID_CTAS = {"Lien en bio", "Découvre le message complet"}
+
 def enforce_limits(content: dict) -> dict:
     """Enforce word-count limits per slide type."""
     limits = {
         "cover":   {"title": 8},
-        "content": {"title": 8, "body": 35},
+        "content": {"title": 8, "body": 25},
         "cta":     {"title": 10},
     }
     for slide in content.get("slides", []):
@@ -161,7 +163,11 @@ def enforce_limits(content: dict) -> dict:
             if slide.get(field):
                 slide[field] = truncate_words(slide[field], max_w)
         if stype == "cta":
-            slide["cta"] = "🔗 Lien en bio"
+            cta = (slide.get("cta") or "").replace("🔗", "").strip()
+            if "découvre" in cta.lower() or "message complet" in cta.lower():
+                slide["cta"] = "Découvre le message complet"
+            else:
+                slide["cta"] = "Lien en bio"
     return content
 
 

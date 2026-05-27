@@ -42,7 +42,7 @@ FALLBACK = {
         {
             "type":  "cta",
             "title": "Reçois ton message du jour",
-            "cta":   "🔗 Lien en bio",
+            "cta":   "Lien en bio",
         },
     ],
 }
@@ -99,15 +99,26 @@ def generate(api_key: str) -> dict:
 
         prompt = f"""Génère un carousel TikTok pour le Psaume {psalm_number} en JSON.
 
-STRUCTURE : exactement 4 slides.
+STRUCTURE RÉTENTION — exactement 4 slides :
 
-- cover : title = accroche percutante max 8 mots (PAS "Psaume {psalm_number}" dans le titre), subtitle = "Psaume {psalm_number}"
-- content num 1 : un verset clé + interprétation — title max 8 mots + body (verset entre guillemets + 1 phrase)
-- content num 2 : application personnelle / révélation — title max 8 mots + body max 25 mots
-- cta : title max 10 mots (question directe)
+SLIDE 1 — cover (STOP SCROLL) :
+  title = accroche max 8 mots, JAMAIS "Psaume {psalm_number}", crée désir immédiat de lire
+  Ex : "Ces mots ont été écrits pour toi" / "Ce que Dieu dit quand tu doutes"
+  subtitle = "Psaume {psalm_number}"
+
+SLIDE 2 — content num 1 (ÉMOTION) :
+  title max 8 mots — phrase forte tirée du psaume
+  body max 18 mots — 1 verset court entre guillemets + 1 phrase d'interprétation percutante
+
+SLIDE 3 — content num 2 (CURIOSITÉ) :
+  title max 8 mots
+  body max 15 mots — application personnelle ultra-courte, ouvre une boucle
+
+SLIDE 4 — cta (ACTION) :
+  title max 10 mots — question directe
 
 MOTS INTERDITS : {forbidden_str}
-Ton : protecteur, sacré, intime, tutoiement. Tout en français.
+STYLE : ultra-court, chaque mot compte, tutoiement, sacré et intime, tout en français.
 
 JSON uniquement :
 {{

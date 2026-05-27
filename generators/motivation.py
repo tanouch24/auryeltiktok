@@ -40,7 +40,7 @@ FALLBACK = {
         {
             "type":  "cta",
             "title": "Quel message t'attend ce matin ?",
-            "cta":   "🔗 Lien en bio",
+            "cta":   "Lien en bio",
         },
     ],
 }
@@ -76,15 +76,29 @@ def generate(api_key: str) -> dict:
 
         prompt = f"""Génère un carousel TikTok de motivation spirituelle matinale en JSON.
 
-STRUCTURE : exactement 4 slides.
+STRUCTURE RÉTENTION — exactement 4 slides :
 
-- cover : title = accroche percutante max 8 mots (fait arrêter le scroll), subtitle = "Motivation spirituelle"
-- content num 1 : message principal — title max 8 mots + body max 30 mots, phrases courtes, retours à la ligne
-- content num 2 : révélation / conseil — title max 8 mots + body max 25 mots, conclusion émotionnelle
-- cta : title max 10 mots (question directe qui crée l'envie de cliquer)
+SLIDE 1 — cover (STOP SCROLL) :
+  title = accroche ultra-spécifique max 8 mots, crée curiosité immédiate
+  INTERDIT : "Tu es fort", "Tu peux le faire", "Tu es capable", tout générique
+  PRÉFÉRER : révélation inattendue, secret implicite, question suggestive
+  Ex : "Ce que tu ignores encore sur toi" / "Il y a une raison que tu lis ceci"
+  subtitle = "Motivation spirituelle"
+
+SLIDE 2 — content num 1 (ÉMOTION) :
+  title max 8 mots — douleur réelle ou espoir concret, aucune banalité
+  body max 20 mots — phrases de 5–7 mots, chaque ligne = choc émotionnel, retours à la ligne
+
+SLIDE 3 — content num 2 (CURIOSITÉ) :
+  title max 8 mots
+  body max 18 mots — révélation inattendue ou vérité suspendue, ne pas tout dire
+  Doit créer une question mentale, une envie de continuer
+
+SLIDE 4 — cta (ACTION) :
+  title max 10 mots — question précise, jamais générique
 
 MOTS INTERDITS : {forbidden_str}
-Ton : direct, émotionnel, tutoiement. Jamais culpabilisant. Tout en français.
+STYLE : phrases courtes, directes, aucune généralité, tutoiement, tout en français.
 
 JSON uniquement :
 {{

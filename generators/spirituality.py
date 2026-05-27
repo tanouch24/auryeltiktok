@@ -49,7 +49,7 @@ FALLBACK = {
         {
             "type":  "cta",
             "title": "Quel message vous est destiné ?",
-            "cta":   "🔗 Lien en bio",
+            "cta":   "Lien en bio",
         },
     ],
 }
@@ -106,15 +106,28 @@ def generate(api_key: str) -> dict:
 
         prompt = f"""Génère un carousel TikTok de voyance spirituelle du soir sur "{topic}" en JSON.
 
-STRUCTURE : exactement 4 slides.
+STRUCTURE RÉTENTION — exactement 4 slides :
 
-- cover : title = accroche mystérieuse max 8 mots (fait arrêter le scroll), subtitle = "{topic.capitalize()}"
-- content num 1 : révélation principale liée à {topic} — title max 8 mots + body max 30 mots
-- content num 2 : message personnel / signe — title max 8 mots + body max 25 mots (ouvre une boucle)
-- cta : title max 10 mots (question directe créant de la curiosité)
+SLIDE 1 — cover (STOP SCROLL) :
+  title = accroche mystérieuse max 8 mots, crée intrigue immédiate, très spécifique
+  INTERDIT : générique, flou, "votre avenir", "un message pour vous"
+  PRÉFÉRER : révélation directe, chiffre, moment précis
+  Ex : "Ce que vos {topic} tentent de vous dire ce soir" / "Le signe que vous attendiez"
+  subtitle = "{topic.capitalize()}"
+
+SLIDE 2 — content num 1 (ÉMOTION) :
+  title max 8 mots — révélation forte liée à {topic}
+  body max 20 mots — phrases courtes, impact émotionnel, vouvoiement, retours à la ligne
+
+SLIDE 3 — content num 2 (CURIOSITÉ) :
+  title max 8 mots
+  body max 15 mots — vérité suspendue, ouvre une boucle mentale, ne pas tout révéler
+
+SLIDE 4 — cta (ACTION) :
+  title max 10 mots — question précise qui donne envie de cliquer
 
 MOTS INTERDITS : {forbidden_str}
-Ton : vouvoiement, mystérieux, révélation cosmique, bienveillant. Tout en français.
+STYLE : vouvoiement, mystérieux, chaque phrase compte, tout en français.
 
 JSON uniquement :
 {{

@@ -18,6 +18,7 @@ from generators.utils import (
     emotion_score, curiosity_score, validate_content,
     get_forbidden_words, save_word_history, pick_layout, pick_seed_offset,
 )
+from generators.hooks import _sample_hooks
 
 logger = logging.getLogger(__name__)
 
@@ -473,8 +474,9 @@ def _save_hook(hook: str) -> None:
 # ─── Prompt builder ──────────────────────────────────────────────────────────
 
 def _build_prompt_story(theme: dict, forbidden_str: str,
-                         cta_title: str, cta_text: str) -> str:
-    hooks_str   = "\n".join(f'    "{h}"' for h in theme["hooks"])
+                         cta_title: str, cta_text: str, today: str = "") -> str:
+    sampled     = _sample_hooks(theme["id"], today, n=6) if today else theme["hooks"]
+    hooks_str   = "\n".join(f'    "{h}"' for h in sampled)
     turning_str = "\n".join(f'    "{t}"' for t in theme["turning"])
     reveal_str  = "\n".join(f'    "{r}"' for r in theme["reveal"])
 
@@ -505,10 +507,13 @@ SLIDE 1 — cover (LE PROBLÈME / HOOK) :
   subtitle = "Histoire vraie"
   EXEMPLES pour "{theme["label"]}" :
 {hooks_str}
-  RÈGLES :
+  RÈGLES STOP-SCROLL :
   - phrase courte et directe, jamais abstraite
   - première personne ou situation concrète
   - le lecteur se reconnaît en 0.5 seconde
+  - commence par un fait brut : "Il a écrit." / "Elle est partie." / "J'avais supprimé."
+  - INTERDIT : questions, points de suspension à la fin, métaphores
+  - maximum 8 mots — chaque mot doit compter
 
 SLIDE 2 — content (L'ÉMOTION / LA TENSION) :
   type = "content", num = 1
@@ -625,7 +630,7 @@ def generate(api_key: str, date_override: str = "") -> dict:
     theme = _pick_theme(used)
     cta_title, cta_text = _pick_soir_cta(today)
 
-    prompt = _build_prompt_story(theme, forbidden_str, cta_title, cta_text)
+    prompt = _build_prompt_story(theme, forbidden_str, cta_title, cta_text, today)
 
     try:
         client = anthropic.Anthropic(api_key=api_key)
